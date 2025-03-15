@@ -1,11 +1,10 @@
 const mongoose = require('mongoose');
 
 const stockSchema = new mongoose.Schema({
+    symbol: { type: String, required: true, unique: true },
     name: { type: String, required: true },
-    symbol: { type: String, unique: true, required: true },
     price: { type: Number, required: true },
-    quantity: { type: Number, required: true }  // Added quantity field
+    quantity: { type: Number, required: true }
 });
 
-const Stock = mongoose.model('Stock', stockSchema);
-module.exports = Stock;
+module.exports = mongoose.model('Stock', stockSchema);

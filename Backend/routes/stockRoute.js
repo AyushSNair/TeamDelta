@@ -2,79 +2,148 @@ const express = require('express');
 const router = express.Router();
 const Stock = require('../models/Stock');
 const Portfolio = require('../models/Portfolio');
+const Transaction = require('../models/Transaction');
+const User = require('../models/userModel');
 
-// Get all stocks in market
-router.get('/market', async (req, res) => {
+/**
+ * @route   GET /api/stocks
+ * @desc    Get all available stocks
+ */
+router.get('/', async (req, res) => {
     try {
-        const stocks = await Stock.find();
-        res.json(stocks);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+        const stocks = await Stock.find({});
+        res.status(200).json(stocks);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal Server Error" });
     }
 });
-
-// Get user's portfolio
-router.get('/portfolio/:userId', async (req, res) => {
+/**
+ * @route   GET /api/stocks/portfolio/:email
+ * @desc    Get user's stock portfolio
+ */
+router.get('/portfolio/:email', async (req, res) => {
     try {
-        const portfolio = await Portfolio.findOne({ userId: req.params.userId }).populate('stocks.stockId');
-        if (!portfolio) return res.status(404).json({ message: 'No portfolio found' });
-        res.json(portfolio);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
+        const { email } = req.params;
+        console.log("Fetching portfolio for:", email);  // Debugging log
 
-// Buy stocks
-router.post('/buy', async (req, res) => {
-    const { userId, stockId, quantity } = req.body;
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
 
-    try {
-        const stock = await Stock.findById(stockId);
-        if (!stock) return res.status(404).json({ message: 'Stock not found' });
-
-        let portfolio = await Portfolio.findOne({ userId });
-        if (!portfolio) {
-            portfolio = new Portfolio({ userId, stocks: [] });
+        const portfolio = await Portfolio.findOne({ userId: user._id }).populate('stocks.stockId');
+        if (!portfolio || portfolio.stocks.length === 0) {
+            return res.status(404).json({ message: "No stocks purchased yet." });
         }
 
-        const stockIndex = portfolio.stocks.findIndex(s => s.stockId.equals(stockId));
-        if (stockIndex > -1) {
+        const formattedPortfolio = portfolio.stocks.map(s => ({
+            symbol: s.stockId.symbol,
+            name: s.stockId.name,
+            quantity: s.quantity,
+            currentPrice: s.stockId.price  // Assuming Stock model has 'price' field
+        }));
+
+        res.status(200).json(formattedPortfolio);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal Server Error" });
+    }
+});
+
+
+/**
+ * @route   POST /api/stocks/buy
+ * @desc    Buy stocks and update market + user portfolio
+ */
+router.post('/buy', async (req, res) => {
+    try {
+        const { email, symbol, quantity } = req.body;
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        
+        const stock = await Stock.findOne({ symbol: symbol.toUpperCase() });
+        if (!stock) return res.status(404).json({ message: "Stock not found" });
+        
+        if (stock.quantity < quantity) {
+            return res.status(400).json({ message: "Not enough stock available" });
+        }
+        
+        stock.quantity -= quantity;
+        await stock.save();
+        
+        const transaction = new Transaction({
+            userEmail: email,
+            symbol: stock.symbol,
+            name: stock.name,
+            price: stock.price,
+            quantity,
+            type: "BUY"
+        });
+        await transaction.save();
+        
+        let portfolio = await Portfolio.findOne({ userId: user._id });
+        if (!portfolio) {
+            portfolio = new Portfolio({ userId: user._id, stocks: [] });
+        }
+        
+        const stockIndex = portfolio.stocks.findIndex(s => s.stockId.equals(stock._id));
+        if (stockIndex >= 0) {
             portfolio.stocks[stockIndex].quantity += quantity;
         } else {
-            portfolio.stocks.push({ stockId, quantity });
+            portfolio.stocks.push({ stockId: stock._id, quantity });
         }
-
         await portfolio.save();
-        res.json({ message: 'Stock purchased successfully', portfolio });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+
+        res.status(200).json({ message: "Stock purchased successfully", transaction, portfolio });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal Server Error" });
     }
 });
 
-// Sell stocks
+/**
+ * @route   POST /api/stocks/sell
+ * @desc    Sell stocks and update user portfolio + market
+ */
 router.post('/sell', async (req, res) => {
-    const { userId, stockId, quantity } = req.body;
-
     try {
-        let portfolio = await Portfolio.findOne({ userId });
-        if (!portfolio) return res.status(404).json({ message: 'No portfolio found' });
-
-        const stockIndex = portfolio.stocks.findIndex(s => s.stockId.equals(stockId));
-        if (stockIndex === -1) return res.status(400).json({ message: 'Stock not in portfolio' });
-
-        if (portfolio.stocks[stockIndex].quantity < quantity) {
-            return res.status(400).json({ message: 'Not enough stock to sell' });
+        const { email, symbol, quantity } = req.body;
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        
+        const stock = await Stock.findOne({ symbol: symbol.toUpperCase() });
+        if (!stock) return res.status(404).json({ message: "Stock not found" });
+        
+        let portfolio = await Portfolio.findOne({ userId: user._id });
+        if (!portfolio) return res.status(400).json({ message: "No holdings found" });
+        
+        const stockIndex = portfolio.stocks.findIndex(s => s.stockId.equals(stock._id));
+        if (stockIndex < 0 || portfolio.stocks[stockIndex].quantity < quantity) {
+            return res.status(400).json({ message: "Not enough stocks to sell" });
         }
-
+        
         portfolio.stocks[stockIndex].quantity -= quantity;
         if (portfolio.stocks[stockIndex].quantity === 0) {
             portfolio.stocks.splice(stockIndex, 1);
         }
-
         await portfolio.save();
-        res.json({ message: 'Stock sold successfully', portfolio });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+        
+        stock.quantity += quantity;
+        await stock.save();
+        
+        const transaction = new Transaction({
+            userEmail: email,
+            symbol: stock.symbol,
+            name: stock.name,
+            price: stock.price,
+            quantity,
+            type: "SELL"
+        });
+        await transaction.save();
+
+        res.status(200).json({ message: "Stock sold successfully", transaction, portfolio });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal Server Error" });
     }
 });
 
