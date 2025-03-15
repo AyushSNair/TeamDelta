@@ -2,6 +2,8 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import './App.css';
+import { Link } from 'react-router-dom';
+
 
 const Home = () => {
   const { user, logout } = useAuth();
@@ -25,16 +27,21 @@ const Home = () => {
       <p>You have successfully logged in!</p>
       
       <div className="dashboard-content">
-        <div className="dashboard-card">
-          <h3>Your Profile</h3>
-          <p>View and edit your profile information</p>
-          <button className="dashboard-btn">View Profile</button>
-        </div>
-        <div className="dashboard-card">
-          <h3>Your Activities</h3>
-          <p>Check your recent activities</p>
-          <button className="dashboard-btn">View Activities</button>
-        </div>
+      <div className="dashboard-card">
+  <h3>Stock Market</h3>
+  <p>View all available stocks</p>
+  <Link to="/stocks">
+    <button className="dashboard-btn">View Stocks</button>
+  </Link>
+</div>
+
+<div className="dashboard-card">
+  <h3>Your Portfolio</h3>
+  <p>Check your purchased stocks</p>
+  <Link to="/portfolio">
+    <button className="dashboard-btn">View Portfolio</button>
+  </Link>
+</div>
         <div className="dashboard-card">
           <h3>Settings</h3>
           <p>Manage your account settings</p>
